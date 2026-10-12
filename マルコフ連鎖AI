@@ -1,0 +1,96 @@
+import streamlit as st
+import wikipediaapi
+import random
+from collections import defaultdict
+
+# ===== マルコフ連鎖AI =====
+class MarkovAI:
+    def __init__(self, n=3):
+        self.n = n
+        self.model = defaultdict(list)
+        self.start = ("<START>",) * n
+        self.end = "<END>"
+
+    def learn(self, text):
+        # 改行・余分な空白を整理
+        text = text.replace("\n", " ").replace("\u3000", " ")
+        tokens = list(text) + [self.end]
+        state = self.start
+        for token in tokens:
+            self.model[state].append(token)
+            state = (state + (token,))[1:]
+
+    def generate(self, max_len=200):
+        if not self.model:
+            return "まだ学習していません。"
+        state = self.start
+        result = []
+        for _ in range(max_len):
+            next_tokens = self.model.get(state)
+            if not next_tokens:
+                # 行き止まりならリセットして再挑戦
+                state = self.start
+                continue
+            next_token = random.choice(next_tokens)
+            if next_token == self.end:
+                break
+            result.append(next_token)
+            state = (state + (next_token,))[1:]
+        return ''.join(result).strip()
+
+
+# ===== Wikipediaから取得 =====
+@st.cache_data(show_spinner=False)
+def fetch_wikipedia(keyword, lang="ja"):
+    wiki = wikipediaapi.Wikipedia(
+        user_agent="MarkovAI/1.0 (contact: example@example.com)",
+        language=lang
+    )
+    # リダイレクトも解決
+    page = wiki.page(keyword, redirect=True)
+    if not page.exists():
+        return None
+    return page.text
+
+
+# ===== Streamlit UI =====
+st.set_page_config(page_title="Wikipedia学習型 マルコフAI", page_icon="🧠")
+st.title("🧠 Wikipedia学習型 マルコフAI")
+
+if "ai" not in st.session_state:
+    st.session_state.ai = MarkovAI(n=3)
+if "learned" not in st.session_state:
+    st.session_state.learned = False
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+keyword = st.text_input("お題（Wikipediaの記事名）", "猫")
+
+# --- 学習ボタン ---
+if st.button("📚 Wikipediaから学習する"):
+    with st.spinner(f"「{keyword}」を取得中..."):
+        text = fetch_wikipedia(keyword)
+
+    if text is None:
+        st.error(f"「{keyword}」の記事が見つかりませんでした。")
+    else:
+        text = text[:20000]  # 2万文字に拡張
+        st.session_state.ai = MarkovAI(n=3)
+        st.session_state.ai.learn(text)
+        st.session_state.learned = True
+        st.session_state.history = []
+        st.success(f"学習完了！({len(text)}文字を学習しました)")
+
+# --- 話すボタン ---
+if st.button("💬 話す"):
+    if not st.session_state.learned:
+        st.warning("先に「Wikipediaから学習する」を押してください。")
+    else:
+        reply = st.session_state.ai.generate(max_len=200)
+        st.session_state.history.append(reply)
+
+# --- 会話履歴表示 ---
+if st.session_state.history:
+    st.markdown("### 💬 会話履歴")
+    for i, msg in enumerate(reversed(st.session_state.history), 1):
+        st.markdown(f"**AI {i}:** {msg}")
